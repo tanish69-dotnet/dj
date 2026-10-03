@@ -1,0 +1,16 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      PORT: 8000
+      DISASTER_DB_PATH: /app/backend/disaster.db
+    volumes:
+      - disaster_data:/app/backend
+    restart: unless-stopped
+
+volumes:
+  disaster_data:

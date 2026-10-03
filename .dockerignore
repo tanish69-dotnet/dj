@@ -1,0 +1,15 @@
+backend/venv
+frontend/node_modules
+frontend/dist
+backend/__pycache__
+backend/**/__pycache__
+*.pyc
+.pytest_cache
+.vite
+.git
+.kilo
+.agent
+omniroute_local
+gemini-web2api
+*.db
+*.log

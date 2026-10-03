@@ -8,6 +8,11 @@ from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from pathlib import Path
+
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+
 from . import models, schemas
 from .database.cities import CITY_SCENARIOS, INDIA_CENTER, OPERATIONAL_CITIES, RESOURCE_CATALOG
 from .database.seed import seed_db
@@ -751,3 +756,32 @@ def get_scenario_blueprint(
             },
         }
     return out
+
+
+# ============================================================
+# STATIC FRONTEND (for single-image Docker deploy)
+# Serves Vite dist/ when present; otherwise API-only mode.
+# ============================================================
+
+_FRONTEND_DIST = Path(__file__).resolve().parent.parent.parent.parent / "frontend" / "dist"
+# Docker layout: /app/frontend/dist copied to /app/frontend/dist
+_DOCKER_DIST = Path("/app/frontend/dist")
+_STATIC_DIR = _DOCKER_DIST if _DOCKER_DIST.exists() else _FRONTEND_DIST
+
+if _STATIC_DIR.exists():
+    app.mount("/assets", StaticFiles(directory=str(_STATIC_DIR / "assets")), name="assets")
+
+    @app.get("/{full_path:path}")
+    async def serve_frontend(full_path: str):
+        # Let /api/* and /docs etc. fall through to FastAPI's own routes
+        if full_path.startswith("api/") or full_path in ("docs", "openapi.json", "redoc"):
+            from fastapi.responses import JSONResponse
+            return JSONResponse(status_code=404, content={"detail": "Not found"})
+        candidate = _STATIC_DIR / full_path
+        if full_path and candidate.is_file():
+            return FileResponse(str(candidate))
+        index = _STATIC_DIR / "index.html"
+        if index.is_file():
+            return FileResponse(str(index))
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=404, content={"detail": "Frontend not built"})
