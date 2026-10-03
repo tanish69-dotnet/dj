@@ -211,7 +211,7 @@ function App() {
                       onRunAllocation={runAllocations}
                       loading={simulationLoading}
                     />
-                    <AiAssistant dashboard={dashboard} allocations={allocations} />
+                    <AiAssistant city={region} />
                   </div>
                 </div>
 

@@ -3,6 +3,8 @@ from typing import List, Optional
 import json
 import os
 
+import httpx
+
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -19,7 +21,8 @@ from .database.cities import CITY_SCENARIOS, INDIA_CENTER, OPERATIONAL_CITIES, R
 from .database.seed import seed_db
 from .db import SessionLocal, engine
 from .services.allocation.engine import create_audit_record, run_allocation, trigger_reallocation
-from .services.gemini.client import gemini_chat
+from .services.gemini.client import gemini_chat, gemini_config_status
+from .services.ops_advisor import build_ops_snapshot, deterministic_reply, format_snapshot_for_prompt
 from .services.routing.engine import find_alternate_routes
 from .services.simulation.engine import process_event, reset_simulation
 
@@ -156,33 +159,130 @@ def scoped_allocations_query(db: Session, loc_ids: Optional[List[str]]):
 
 
 # ============================================================
-# AI / GEMINI
+# AI OPERATIONS ASSISTANT
+# Behaviour: when the Gemini Web2API provider is configured the request is
+# answered by the model, grounded with a live database snapshot. When the
+# provider is unconfigured or errors, the endpoint degrades to the same
+# deterministic, database-derived advisor instead of failing, and the response
+# is flagged with source/degraded metadata so the UI never presents generated
+# fallback text as an LLM answer.
 # ============================================================
 
 class GeminiRequest(BaseModel):
     message: str
+    city: Optional[str] = None
+
+
+def _describe_provider_error(exc: Exception) -> str:
+    name = type(exc).__name__
+    detail = str(exc).strip()
+    if isinstance(exc, httpx.TimeoutException):
+        return f"{name}: AI provider timed out"
+    return f"{name}: {detail}" if detail else name
+
+
+def _ai_snapshot_facts(snap: dict) -> dict:
+    return {
+        "live_incidents": len(snap["live_incidents"]),
+        "open_demands": len(snap["open_demands"]),
+        "critical_demands": len(snap["critical_demands"]),
+        "blocked_roads": len(snap["blocked_roads"]),
+        "shortages": len(snap["shortages"]),
+        "stale_allocations": len(snap["stale_allocs"]),
+        "at_risk_allocations": len(snap["at_risk_allocs"]),
+        "affected_population": snap["total_affected"],
+    }
+
+
+def _ai_missing_env(cfg: dict) -> List[str]:
+    return [
+        name
+        for name, ok in (
+            ("GEMINI_WEB2API_BASE_URL", cfg["base_url_set"]),
+            ("GEMINI_WEB2API_API_KEY", cfg["api_key_set"]),
+        )
+        if not ok
+    ]
+
+
+@app.get("/api/ai/status")
+def ai_status(city: Optional[str] = Query(None)):
+    """Report whether the LLM provider is usable, without calling it."""
+    cfg = gemini_config_status()
+    return {
+        "scope": resolve_city(city) or "INDIA",
+        "provider": "gemini-web2api",
+        "model": cfg["model"],
+        "configured": cfg["configured"],
+        "base_url_set": cfg["base_url_set"],
+        "api_key_set": cfg["api_key_set"],
+        "degraded": not cfg["configured"],
+        "mode": "ai" if cfg["configured"] else "deterministic",
+        "missing_env": _ai_missing_env(cfg),
+    }
 
 
 @app.post("/api/ai/chat")
-async def ai_chat(request: GeminiRequest):
+async def ai_chat(request: GeminiRequest, db: Session = Depends(get_db)):
+    message = (request.message or "").strip()
+    if not message:
+        raise HTTPException(status_code=422, detail="Question must not be empty.")
 
-    try:
+    city = resolve_city(request.city)
+    snap = build_ops_snapshot(db, city)
+    facts = _ai_snapshot_facts(snap)
+    scope = snap["scope"]
+    deterministic_text = deterministic_reply(message, snap)
 
-        reply = await gemini_chat(
-            request.message
-        )
-
+    cfg = gemini_config_status()
+    if not cfg["configured"]:
         return {
             "success": True,
-            "reply": reply
+            "degraded": True,
+            "source": "deterministic_ops_advisor",
+            "model": None,
+            "scope": scope,
+            "reason": (
+                "AI provider not configured. Answer computed directly from live "
+                "operational records."
+            ),
+            "missing_env": _ai_missing_env(cfg),
+            "facts": facts,
+            "reply": deterministic_text,
         }
 
-    except Exception as e:
+    prompt = (
+        "You are the operations assistant for a disaster relief coordination "
+        "platform. Answer using ONLY the operational snapshot below. Never "
+        "invent locations, resources, quantities, or incidents. If the snapshot "
+        "does not contain the answer, say what data is missing.\n\n"
+        f"LIVE OPERATIONAL SNAPSHOT ({scope}):\n{format_snapshot_for_prompt(snap)}\n\n"
+        f"QUESTION: {message}\n\n"
+        "Give a short, precise operational answer with concrete next actions."
+    )
 
-        raise HTTPException(
-            status_code=500,
-            detail=f"Gemini API error: {str(e)}"
-        )
+    try:
+        reply = await gemini_chat(prompt)
+        provider_error = None
+    except Exception as exc:  # provider/network failure -> deterministic fallback
+        reply = deterministic_text
+        provider_error = _describe_provider_error(exc)[:300]
+
+    return {
+        "success": True,
+        "degraded": provider_error is not None,
+        "source": "deterministic_ops_advisor" if provider_error else "gemini",
+        "model": cfg["model"] if provider_error is None else None,
+        "scope": scope,
+        "reason": (
+            f"AI provider unreachable ({provider_error}). Answer computed "
+            "directly from live operational records."
+            if provider_error
+            else None
+        ),
+        "facts": facts,
+        "reply": reply,
+    }
 
 
 # ============================================================

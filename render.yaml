@@ -23,5 +23,15 @@ services:
     envVars:
       - key: DISASTER_DB_PATH
         value: /data/disaster.db
+      # AI Operations Assistant provider (optional).
+      # sync:false keeps whatever is set in the Render dashboard, so blueprint
+      # updates never overwrite a configured key. Leave empty and the assistant
+      # answers from live database records instead of failing.
+      - key: GEMINI_WEB2API_BASE_URL
+        sync: false
+      - key: GEMINI_WEB2API_API_KEY
+        sync: false
+      - key: GEMINI_WEB2API_MODEL
+        sync: false
 
 # For a split static-site + Python API deploy instead, see render-split.yaml.

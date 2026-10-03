@@ -45,6 +45,32 @@ npm run dev
 5. Shipment tracked to delivery.
 6. Audit ledger verified.
 
+## AI Operations Assistant
+
+`POST /api/ai/chat` answers questions about live operational state. It always
+resolves its facts from the database for the requested city scope (`city` is
+`INDIA`/omitted for the national view) — nothing is invented client-side.
+
+The assistant runs in one of two modes, and the response always reports which:
+
+- **ai** — a Gemini Web2API-compatible provider is configured and answered.
+- **deterministic** — no provider is configured, or the provider failed. The
+  endpoint still returns `200` with a database-derived operational brief
+  (`degraded: true`, `source: "deterministic_ops_advisor"`) instead of erroring.
+
+Optional server-side environment variables:
+
+| Variable | Purpose |
+| --- | --- |
+| `GEMINI_WEB2API_BASE_URL` | Base URL of the OpenAI-compatible provider, e.g. `https://gemini.example.com/v1`. Loopback/placeholder URLs are rejected. |
+| `GEMINI_WEB2API_API_KEY` | Provider bearer token. Never sent to the browser. |
+| `GEMINI_WEB2API_MODEL` | Model id; defaults to `gemini-2.0-flash`. |
+
+Set them in the Render dashboard for the `dj` service (`render.yaml` declares
+them with `sync: false`, so blueprint updates never overwrite your values).
+`GET /api/ai/status` reports the current mode without calling the provider, and
+the UI header shows `READY — <model>` or `DEGRADED — DATA ADVISOR`.
+
 ## Deployment
 
 The image built from `Dockerfile` is **single-service**: FastAPI serves `/api/*`
