@@ -1,0 +1,21 @@
+# Hackathon Checklist
+
+- [ ] Inspect workspace (Done)
+- [ ] Create documentation architecture (Done)
+- [ ] Setup Frontend scaffold (Vite + React)
+- [ ] Setup Backend scaffold (FastAPI)
+- [ ] Implement Database schema (SQLite)
+- [ ] Seed deterministic local dataset
+- [ ] Implement Allocation Engine
+- [ ] Implement Routing Engine
+- [ ] Implement Simulation Engine
+- [ ] Implement SHA-256 Audit Ledger
+- [ ] Build Frontend Dashboard
+- [ ] Build Map Component
+- [ ] Build Tracking UI
+- [ ] Build Explainability Panel
+- [ ] Integrate Frontend and Backend
+- [ ] Write Tests (Constraints, Routing, Simulation)
+- [ ] Final UI Polish
+- [ ] Validate Demo works completely offline
+- [ ] Verify no secrets/keys are exposed
