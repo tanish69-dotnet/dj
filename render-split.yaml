@@ -1,0 +1,51 @@
+# Alternative Render Blueprint — split frontend/backend deploy.
+#
+# Use this only if you specifically want the React app served by a Render static
+# site and the API from a separate Python service. The default render.yaml
+# single-service layout is simpler and has no cross-origin dependency.
+#
+# To use: paste this content when creating the Blueprint (Render only
+# auto-detects render.yaml at the repo root).
+#
+# Blueprint spec: https://render.com/docs/blueprint-spec
+
+services:
+  - type: web
+    name: dj-backend
+    runtime: python
+    plan: free
+    region: singapore
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/dashboard
+    autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      # Uncomment together with a persistent disk to keep the SQLite file:
+      # - key: DISASTER_DB_PATH
+      #   value: /var/data/disaster.db
+
+  - type: web
+    name: dj-frontend
+    runtime: static
+    plan: free
+    region: singapore
+    rootDir: frontend
+    # BACKEND_HOST is resolved from the service above, then expanded by the shell
+    # at build time. This removes the manual "set VITE_API_URL after the first
+    # deploy" step that previously blocked this configuration.
+    buildCommand: npm ci && VITE_API_URL=https://$BACKEND_HOST/api npm run build
+    staticPublishPath: dist
+    autoDeploy: true
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      - key: BACKEND_HOST
+        fromService:
+          type: web
+          name: dj-backend
+          property: host

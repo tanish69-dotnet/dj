@@ -1,5 +1,5 @@
 services:
-  backend:
+  app:
     build:
       context: .
       dockerfile: Dockerfile
@@ -7,9 +7,12 @@ services:
       - "8000:8000"
     environment:
       PORT: 8000
-      DISASTER_DB_PATH: /app/backend/disaster.db
+      # Keep the database on the volume, not next to the app code. Mounting
+      # /app/backend here would shadow the copied source and pin the container
+      # to whatever code existed the first time the volume was created.
+      DISASTER_DB_PATH: /data/disaster.db
     volumes:
-      - disaster_data:/app/backend
+      - disaster_data:/data
     restart: unless-stopped
 
 volumes:

@@ -1,6 +1,7 @@
 from typing import List, Optional
 
 import json
+import os
 
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -30,6 +31,25 @@ models.Base.metadata.create_all(bind=engine)
 
 # Baseline synthetic demo dataset (versioned, idempotent, audit ledger preserved)
 seed_db()
+
+# ============================================================
+# STATIC FRONTEND DETECTION
+# Opt-in via SERVE_FRONTEND so a local Vite build in frontend/dist never
+# shadows the dev server, and the API stays JSON-only for tests. Single-image
+# container deploys set SERVE_FRONTEND=1; then "/" returns the app instead of
+# the API welcome payload.
+# ============================================================
+
+SERVE_FRONTEND = os.environ.get("SERVE_FRONTEND", "").strip().lower() in {"1", "true", "yes", "on"}
+
+_FRONTEND_DIST = Path(__file__).resolve().parent.parent.parent.parent / "frontend" / "dist"
+# Docker layout: /app/frontend/dist copied to /app/frontend/dist
+_DOCKER_DIST = Path("/app/frontend/dist")
+STATIC_DIR = _DOCKER_DIST if _DOCKER_DIST.exists() else _FRONTEND_DIST
+INDEX_HTML = STATIC_DIR / "index.html" if SERVE_FRONTEND and STATIC_DIR.is_dir() else None
+if INDEX_HTML is not None and not INDEX_HTML.is_file():
+    INDEX_HTML = None
+
 
 # ============================================================
 # FASTAPI APP
@@ -194,6 +214,11 @@ def get_cities():
 
 @app.get("/")
 def read_root():
+
+    # Single-image deploys open this URL in a browser, so hand back the app.
+    # API-only mode (no Vite build) keeps the JSON welcome payload.
+    if INDEX_HTML is not None:
+        return FileResponse(str(INDEX_HTML))
 
     return {
         "message": "Welcome to the Disaster Relief Resource Allocation API"
@@ -760,16 +785,12 @@ def get_scenario_blueprint(
 
 # ============================================================
 # STATIC FRONTEND (for single-image Docker deploy)
-# Serves Vite dist/ when present; otherwise API-only mode.
+# Registered last so every /api/* route above keeps priority. "/" is handled by
+# read_root; this catch-all covers hashed assets, public files and deep links.
 # ============================================================
 
-_FRONTEND_DIST = Path(__file__).resolve().parent.parent.parent.parent / "frontend" / "dist"
-# Docker layout: /app/frontend/dist copied to /app/frontend/dist
-_DOCKER_DIST = Path("/app/frontend/dist")
-_STATIC_DIR = _DOCKER_DIST if _DOCKER_DIST.exists() else _FRONTEND_DIST
-
-if _STATIC_DIR.exists():
-    app.mount("/assets", StaticFiles(directory=str(_STATIC_DIR / "assets")), name="assets")
+if INDEX_HTML is not None:
+    app.mount("/assets", StaticFiles(directory=str(STATIC_DIR / "assets")), name="assets")
 
     @app.get("/{full_path:path}")
     async def serve_frontend(full_path: str):
@@ -777,11 +798,8 @@ if _STATIC_DIR.exists():
         if full_path.startswith("api/") or full_path in ("docs", "openapi.json", "redoc"):
             from fastapi.responses import JSONResponse
             return JSONResponse(status_code=404, content={"detail": "Not found"})
-        candidate = _STATIC_DIR / full_path
+        candidate = STATIC_DIR / full_path
         if full_path and candidate.is_file():
             return FileResponse(str(candidate))
-        index = _STATIC_DIR / "index.html"
-        if index.is_file():
-            return FileResponse(str(index))
-        from fastapi.responses import JSONResponse
-        return JSONResponse(status_code=404, content={"detail": "Frontend not built"})
+        # SPA fallback: any unknown non-API path renders the client router
+        return FileResponse(str(INDEX_HTML))

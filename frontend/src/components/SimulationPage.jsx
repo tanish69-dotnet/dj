@@ -82,11 +82,15 @@ function RoadCard({ road, locations, allocations }) {
   );
 }
 
+const COVERAGE_TONE = {
+  OK:   { bar: '#10B981', text: 'text-[#10B981]', bg: 'bg-[#10B981]/10', border: 'border-[#10B981]/30' },
+  WARN: { bar: '#F59E0B', text: 'text-[#F59E0B]', bg: 'bg-[#F59E0B]/10', border: 'border-[#F59E0B]/30' },
+  CRIT: { bar: '#EF4444', text: 'text-[#EF4444]', bg: 'bg-[#EF4444]/10', border: 'border-[#EF4444]/30' },
+};
+
 function ResourceCard({ resource, rows, allocations, openDemands }) {
-  const totals = rows.reduce((acc, r) => {
-    acc.stock += r.quantity || 0;
-    return acc;
-  }, { stock: 0 });
+  const stock = rows.reduce((acc, r) => acc + (r.quantity || 0), 0);
+  const depots = rows.length;
   const allocated = allocations
     .filter(a => a.resource_id === resource.id && ['ALLOCATED', 'DISPATCHED'].includes(a.status))
     .reduce((sum, a) => sum + a.quantity, 0);
@@ -94,33 +98,48 @@ function ResourceCard({ resource, rows, allocations, openDemands }) {
     .filter(a => a.resource_id === resource.id && a.status === 'IN_TRANSIT')
     .reduce((sum, a) => sum + a.quantity, 0);
   const required = openDemands.filter(d => d.resource_id === resource.id).reduce((s, d) => s + d.quantity, 0);
-  const coverage = required > 0 ? Math.min(100, Math.round((totals.stock / required) * 100)) : 100;
+
+  // Coverage must be measured on uncommitted stock — stock already allocated or
+  // in transit cannot satisfy new demand, so counting it overstates readiness.
+  const available = Math.max(0, stock - allocated - inTransit);
+  const coverage = required > 0 ? Math.min(100, Math.round((available / required) * 100)) : 100;
+  const tone = required === 0 ? COVERAGE_TONE.OK : coverage >= 100 ? COVERAGE_TONE.OK : coverage >= 60 ? COVERAGE_TONE.WARN : COVERAGE_TONE.CRIT;
+
+  const stats = [
+    { label: 'AVAILABLE', value: available, tone: COVERAGE_TONE.OK },
+    { label: 'ALLOCATED', value: allocated, tone: COVERAGE_TONE.WARN },
+    { label: 'IN TRANSIT', value: inTransit, tone: COVERAGE_TONE.CRIT },
+  ];
+
   return (
-    <div className="p-3 rounded-lg border border-[#1E2D42]/50 bg-[#0B111B]">
-      <div className="flex items-center justify-between mb-2">
-        <span className="text-white font-medium text-sm truncate">{resource.name}</span>
-        <span className="text-[10px] text-[#5A6E85] font-mono">{resource.id}</span>
-      </div>
-      <div className="grid grid-cols-3 gap-2 text-center">
-        <div className="p-2 bg-[#10B981]/10 rounded border border-[#10B981]/30">
-          <div className="text-white font-mono text-lg">{totals.stock}</div>
-          <div className="text-[9px] text-[#8B9CB3] uppercase">IN STOCK</div>
+    <div className="flex flex-col p-3 rounded-lg border border-[#1E2D42]/50 bg-[#0B111B] min-w-0">
+      <div className="flex items-start justify-between gap-2 mb-2.5">
+        <div className="min-w-0">
+          <div className="text-white font-medium text-sm truncate">{resource.name}</div>
+          <div className="text-[9px] font-mono text-[#5A6E85] truncate">{resource.id} · {resource.category}</div>
         </div>
-        <div className="p-2 bg-[#3B82F6]/10 rounded border border-[#3B82F6]/30">
-          <div className="text-white font-mono text-lg">{allocated}</div>
-          <div className="text-[9px] text-[#8B9CB3] uppercase">ALLOCATED</div>
-        </div>
-        <div className="p-2 bg-[#06B6D4]/10 rounded border border-[#06B6D4]/30">
-          <div className="text-white font-mono text-lg">{inTransit}</div>
-          <div className="text-[9px] text-[#8B9CB3] uppercase">IN TRANSIT</div>
-        </div>
+        <span className="shrink-0 px-1.5 py-0.5 rounded text-[9px] font-mono whitespace-nowrap bg-[#05080D] border border-[#1E2D42]/60 text-[#8B9CB3]">
+          {depots} DEPOT{depots === 1 ? '' : 'S'}
+        </span>
       </div>
-      <div className="mt-2 flex items-center justify-between text-[9px] font-mono text-[#5A6E85]">
-        <span>DEMAND {required}</span>
-        <span>COVERAGE {coverage}%</span>
+
+      {/* 3 stats side by side. Requires >=260px of card width to stay legible —
+          hence the dedicated wide row instead of the narrow control rail. */}
+      <div className="grid grid-cols-3 gap-1.5 min-w-0">
+        {stats.map(s => (
+          <div key={s.label} className={`min-w-0 px-1.5 py-1.5 rounded text-center ${s.tone.bg} border ${s.tone.border}`}>
+            <div className="text-white font-mono text-base leading-tight truncate">{s.value.toLocaleString()}</div>
+            <div className="text-[9px] uppercase text-[#8B9CB3] truncate leading-tight" title={s.label}>{s.label}</div>
+          </div>
+        ))}
       </div>
-      <div className="mt-1 h-1.5 bg-[#05080D] rounded-full overflow-hidden">
-        <div className="h-full" style={{ width: `${coverage}%`, background: coverage < 60 ? '#F59E0B' : '#10B981' }} />
+
+      <div className="mt-2.5 pt-2 border-t border-[#1E2D42]/50 flex items-center justify-between gap-2 text-[9px] font-mono">
+        <span className="text-[#5A6E85] truncate">DEMAND <span className="text-white">{required.toLocaleString()}</span></span>
+        <span className={`${tone.text} shrink-0`}>COVERAGE {coverage}%</span>
+      </div>
+      <div className="mt-1 h-1.5 bg-[#05080D] rounded-full overflow-hidden border border-[#1E2D42]/40">
+        <div className="h-full transition-[width] duration-500" style={{ width: `${coverage}%`, backgroundColor: tone.bar }} />
       </div>
     </div>
   );
@@ -362,10 +381,17 @@ export default function SimulationPage() {
   const criticalDemands = demands.filter(d => d.severity >= 4 && (d.status === 'OPEN' || d.status === 'PARTIAL')).length;
   const activeDemands = demands.filter(d => d.status === 'OPEN' || d.status === 'PARTIAL').length;
   const openDemands = useMemo(() => demands.filter(d => d.status === 'OPEN' || d.status === 'PARTIAL'), [demands]);
+  // Most severe / largest exposure first — the register is a triage list, not a log.
   const liveIncidents = useMemo(
-    () => incidents.filter(i => i.status === 'ACTIVE' || i.status === 'MONITORING'),
+    () => incidents
+      .filter(i => i.status === 'ACTIVE' || i.status === 'MONITORING')
+      .slice()
+      .sort((a, b) => (b.severity - a.severity) || ((b.affected_population ?? 0) - (a.affected_population ?? 0))),
     [incidents],
   );
+  const criticalLiveIncidents = useMemo(() => liveIncidents.filter(i => i.severity >= 4).length, [liveIncidents]);
+  const exposedPopulation = useMemo(() => liveIncidents.reduce((s, i) => s + (i.affected_population ?? 0), 0), [liveIncidents]);
+  const stockTotal = useMemo(() => inventory.reduce((s, i) => s + (i.quantity || 0), 0), [inventory]);
 
   // Only resource types actually stocked in this scope get a card.
   const scopedResources = useMemo(() => {
@@ -411,10 +437,13 @@ export default function SimulationPage() {
       </header>
 
       <div className="p-4 space-y-4 max-w-full">
-        {/* ==================== ROW 1: SCENARIO INPUTS + DISASTER SCENARIO + TOPOLOGICAL NETWORK ==================== */}
-        <div className="grid lg:grid-cols-[300px_1fr] gap-4">
-          {/* LEFT COLUMN: SCENARIO INPUTS + DISASTER SCENARIO + RESOURCE INVENTORY */}
-          <div className="space-y-4 lg:order-1">
+        {/* ==================== ROW 1: SCENARIO CONTROLS + MAP / CORRIDORS ====================
+            The rail only holds stacked label/value blocks and full-width buttons, so it
+            stays narrow. Anything with a multi-column grid or a field table lives in its
+            own full-width row further down. */}
+        <div className="grid xl:grid-cols-[340px_1fr] gap-4 items-start">
+          {/* LEFT RAIL: SCENARIO INPUTS + DISASTER SCENARIO */}
+          <div className="space-y-4 xl:order-1">
             {/* SCENARIO INPUTS */}
             <section className="bg-[#0B111B] border border-[#1E2D42]/50 rounded-lg p-4">
               <div className="flex items-center justify-between mb-3">
@@ -525,77 +554,136 @@ export default function SimulationPage() {
                 <MetricRow label="CRITICAL DEMANDS" value={criticalDemands} unit="" trend={criticalDemands > 0 ? <span className="text-[#EF4444]">HIGH</span> : <span className="text-[#10B981]">NOMINAL</span>} />
               </div>
             </section>
-
-            {/* RESOURCE INVENTORY */}
-            <section className="bg-[#0B111B] border border-[#1E2D42]/50 rounded-lg p-4">
-              <h2 className="text-[10px] font-semibold text-[#8B9CB3] uppercase tracking-wider mb-3 flex items-center gap-1">
-                <Package size={11} className="text-[#00D4FF]" /> RESOURCE INVENTORY — {scopeLabel}
-              </h2>
-              <div className="grid grid-cols-3 gap-3">
-                {scopedResources.map(res => (
-                  <ResourceCard
-                    key={res.id}
-                    resource={res}
-                    rows={inventory.filter(i => i.resource_id === res.id)}
-                    allocations={allocations}
-                    openDemands={openDemands}
-                  />
-                ))}
-                {scopedResources.length === 0 && (
-                  <p className="col-span-3 text-[11px] text-[#5A6E85] font-mono py-3 text-center">NO STOCK RECORDS IN THIS SCOPE</p>
-                )}
-              </div>
-            </section>
-
-            {/* LIVE INCIDENT REGISTER */}
-            <section className="bg-[#0B111B] border border-[#1E2D42]/50 rounded-lg p-4">
-              <h2 className="text-[10px] font-semibold text-[#8B9CB3] uppercase tracking-wider mb-3 flex items-center gap-1">
-                <TriangleAlert size={11} className="text-[#EF4444]" /> LIVE INCIDENT REGISTER — {scopeLabel}
-              </h2>
-              <div className="space-y-1.5 max-h-[240px] overflow-y-auto">
-                {liveIncidents.map(inc => (
-                  <div key={inc.id} className="flex items-center justify-between gap-2 px-2 py-1.5 rounded border border-[#1E2D42]/60 bg-[#05080D] text-[11px] font-mono">
-                    <span className="text-white truncate">{inc.title}</span>
-                    <span className={inc.severity >= 4 ? 'text-[#EF4444]' : 'text-[#FFB95F]'}>SEV {inc.severity}</span>
-                    <span className="text-[#8B9CB3]">{inc.category}</span>
-                    <span className="text-[#00D4FF]">{(inc.affected_population ?? 0).toLocaleString()} exposed</span>
-                    <span className={inc.status === 'ACTIVE' ? 'text-[#EF4444]' : 'text-[#FFB95F]'}>{inc.status}</span>
-                  </div>
-                ))}
-                {liveIncidents.length === 0 && (
-                  <p className="text-[11px] text-[#5A6E85] font-mono py-3 text-center">NO LIVE INCIDENTS IN THIS SCOPE</p>
-                )}
-              </div>
-            </section>
           </div>
 
           {/* RIGHT COLUMN: TOPOLOGICAL NETWORK */}
-          <div className="space-y-4 lg:order-2">
+          <div className="space-y-4 xl:order-2">
             <section className="bg-[#0B111B] border border-[#1E2D42]/50 rounded-lg p-4">
-              <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center justify-between gap-3 mb-3">
                 <h2 className="text-[10px] font-semibold text-[#8B9CB3] uppercase tracking-wider flex items-center gap-1">
-                  <GitBranch size={11} className="text-[#00D4FF]" /> TOPOLOGICAL NETWORK & ROAD VECTORS
+                  <GitBranch size={11} className="text-[#00D4FF]" /> TOPOLOGICAL NETWORK &amp; ROAD VECTORS
                 </h2>
-                <span className="text-[9px] text-[#5A6E85]">Real-time graph state · route feasibility</span>
+                <span className="hidden sm:inline text-[9px] text-[#5A6E85] text-right">Real-time graph state · route feasibility</span>
               </div>
-              <div className="h-[480px] w-full rounded-lg overflow-hidden border border-[#1E2D42]/50 relative"><MapView selectedAllocation={activeAlloc || staleAllocs[0] || null} /></div>
+              {/* Height tracks the control rail (scenario controls + disaster metrics)
+                  so the two columns end together instead of leaving a tall gap. */}
+              <div className="h-[400px] md:h-[480px] xl:h-[560px] w-full rounded-lg overflow-hidden border border-[#1E2D42]/50 relative"><MapView selectedAllocation={activeAlloc || staleAllocs[0] || null} /></div>
             </section>
 
             {/* ROAD / ROUTE STATUS */}
             <section className="bg-[#0B111B] border border-[#1E2D42]/50 rounded-lg p-4">
-              <h2 className="text-[10px] font-semibold text-[#8B9CB3] uppercase tracking-wider mb-3 flex items-center gap-1">
-                <Route size={11} className="text-[#00D4FF]" /> ROAD / ROUTE STATUS
-              </h2>
-              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              <div className="flex items-center justify-between gap-3 mb-3">
+                <h2 className="text-[10px] font-semibold text-[#8B9CB3] uppercase tracking-wider flex items-center gap-1">
+                  <Route size={11} className="text-[#00D4FF]" /> ROAD / ROUTE STATUS
+                </h2>
+                <div className="flex items-center gap-2 text-[9px] font-mono shrink-0">
+                  <span className="text-[#10B981]">{openCount} OPEN</span>
+                  <span className={blockedCount > 0 ? 'text-[#EF4444]' : 'text-[#5A6E85]'}>{blockedCount} BLOCKED</span>
+                  <span className="text-[#5A6E85]">/ {roads.length} TOTAL</span>
+                </div>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
                 {roads.map(road => (
                   <RoadCard key={road.id} road={road} locations={locations} allocations={allocations} />
                 ))}
+                {roads.length === 0 && (
+                  <p className="col-span-full text-[11px] text-[#5A6E85] font-mono py-4 text-center">NO ROAD NETWORK IN THIS SCOPE</p>
+                )}
               </div>
             </section>
           </div>
         </div>
 
-        {/* ==================== ROW 2: CAUSE → EFFECT TIMELINE + ALGORITHMIC RATIONALE ==================== */}
+        {/* ==================== ROW 2: RESOURCE INVENTORY + LIVE INCIDENT REGISTER ====================
+            Both sections were previously stacked inside the 340px control rail, where a
+            3-up card grid collapsed to ~27px per stat cell and a 5-field flex row clipped
+            every column. They get a full-width two-column row here. */}
+        <div className="grid xl:grid-cols-[1.15fr_1fr] gap-4 items-start">
+          {/* RESOURCE INVENTORY */}
+          <section className="bg-[#0B111B] border border-[#1E2D42]/50 rounded-lg p-4">
+            <div className="flex items-center justify-between gap-3 mb-3">
+              <h2 className="text-[10px] font-semibold text-[#8B9CB3] uppercase tracking-wider flex items-center gap-1 min-w-0">
+                <Package size={11} className="text-[#00D4FF] shrink-0" />
+                <span className="truncate">RESOURCE INVENTORY — {scopeLabel}</span>
+              </h2>
+              <div className="flex items-center gap-2 text-[9px] font-mono shrink-0">
+                <span className="text-[#8B9CB3]">{scopedResources.length} TYPES</span>
+                <span className="text-[#5A6E85] hidden sm:inline">{inventory.length} DEPOT ROWS</span>
+                <span className="text-[#00D4FF]">{stockTotal.toLocaleString()} UNITS</span>
+              </div>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2 2xl:grid-cols-3">
+              {scopedResources.map(res => (
+                <ResourceCard
+                  key={res.id}
+                  resource={res}
+                  rows={inventory.filter(i => i.resource_id === res.id)}
+                  allocations={allocations}
+                  openDemands={openDemands}
+                />
+              ))}
+            </div>
+            {scopedResources.length === 0 && (
+              <p className="text-[11px] text-[#5A6E85] font-mono py-6 text-center">NO STOCK RECORDS IN THIS SCOPE</p>
+            )}
+          </section>
+
+          {/* LIVE INCIDENT REGISTER */}
+          <section className="bg-[#0B111B] border border-[#1E2D42]/50 rounded-lg p-4 flex flex-col min-w-0">
+            <div className="flex items-center justify-between gap-3 mb-3">
+              <h2 className="text-[10px] font-semibold text-[#8B9CB3] uppercase tracking-wider flex items-center gap-1 min-w-0">
+                <TriangleAlert size={11} className="text-[#EF4444] shrink-0" />
+                <span className="truncate">LIVE INCIDENT REGISTER — {scopeLabel}</span>
+              </h2>
+              <div className="flex items-center gap-2 text-[9px] font-mono shrink-0">
+                <span className="text-[#EF4444]">{liveIncidents.length} LIVE</span>
+                <span className={criticalLiveIncidents > 0 ? 'text-[#EF4444]' : 'text-[#5A6E85]'}>{criticalLiveIncidents} CRITICAL</span>
+                <span className="text-[#00D4FF] hidden sm:inline">{exposedPopulation.toLocaleString()} EXPOSED</span>
+              </div>
+            </div>
+            <div className="overflow-x-auto max-h-[460px] overflow-y-auto rounded border border-[#1E2D42]/50">
+              <table className="w-full text-left font-mono text-[11px] min-w-[520px]">
+                <thead className="sticky top-0 z-10">
+                  <tr className="bg-[#05080D] text-[#5A6E85] text-[9px] uppercase border-b border-[#1E2D42]">
+                    {['INCIDENT', 'SITE', 'CATEGORY', 'SEV', 'EXPOSED', 'STATUS'].map(h => (
+                      <th key={h} className="px-2.5 py-2 whitespace-nowrap font-medium">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[#1E2D42]/40">
+                  {liveIncidents.map(inc => {
+                    const site = locations.find(l => l.id === inc.location_id);
+                    const critical = inc.severity >= 4;
+                    return (
+                      <tr key={inc.id} className="hover:bg-[#05080D]">
+                        <td className="px-2.5 py-2 text-white max-w-[220px]">
+                          <div className="truncate" title={inc.title}>{inc.title}</div>
+                        </td>
+                        <td className="px-2.5 py-2 text-[#8B9CB3] max-w-[150px]">
+                          <div className="truncate" title={site?.name ?? inc.location_id}>{site?.name ?? inc.location_id ?? '—'}</div>
+                        </td>
+                        <td className="px-2.5 py-2 text-[#8B9CB3] whitespace-nowrap">{inc.category}</td>
+                        <td className={`px-2.5 py-2 whitespace-nowrap ${critical ? 'text-[#EF4444]' : 'text-[#F59E0B]'}`}>SEV {inc.severity}</td>
+                        <td className="px-2.5 py-2 text-[#00D4FF] whitespace-nowrap">{(inc.affected_population ?? 0).toLocaleString()}</td>
+                        <td className="px-2.5 py-2 whitespace-nowrap">
+                          <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] ${inc.status === 'ACTIVE' ? 'bg-[#EF4444]/15 text-[#EF4444]' : 'bg-[#F59E0B]/15 text-[#F59E0B]'}`}>
+                            <span className={`w-1 h-1 rounded-full ${inc.status === 'ACTIVE' ? 'bg-[#EF4444] animate-pulse' : 'bg-[#F59E0B]'}`} />
+                            {inc.status}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {liveIncidents.length === 0 && (
+                    <tr><td colSpan="6" className="px-3 py-6 text-center text-[#5A6E85]">NO LIVE INCIDENTS IN THIS SCOPE</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+
+        {/* ==================== ROW 3: CAUSE → EFFECT TIMELINE + ALGORITHMIC RATIONALE ==================== */}
         <section className="bg-[#0B111B] border border-[#1E2D42]/50 rounded-lg p-4">
           <div className="flex items-center justify-between mb-3">
             <h2 className="text-[10px] font-semibold text-[#8B9CB3] uppercase tracking-wider flex items-center gap-1">
@@ -617,7 +705,7 @@ export default function SimulationPage() {
           </div>
         </section>
 
-        {/* ==================== ROW 3: BEFORE / AFTER REALLOCATION ==================== */}
+        {/* ==================== ROW 4: BEFORE / AFTER REALLOCATION ==================== */}
         <section className="bg-[#0B111B] border border-[#1E2D42]/50 rounded-lg p-4">
           <h2 className="text-[10px] font-semibold text-[#8B9CB3] uppercase tracking-wider mb-3 flex items-center gap-1">
             <Route size={11} className="text-[#F59E0B]" /> BEFORE / AFTER REALLOCATION
@@ -630,7 +718,7 @@ export default function SimulationPage() {
           />
         </section>
 
-        {/* ==================== ROW 4: AUDIT / SYSTEM INTEGRITY ==================== */}
+        {/* ==================== ROW 5: AUDIT / SYSTEM INTEGRITY ==================== */}
         <section className="bg-[#0B111B] border border-[#1E2D42]/50 rounded-lg p-4">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-[10px] font-semibold text-[#8B9CB3] uppercase tracking-wider flex items-center gap-1">

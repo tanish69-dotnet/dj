@@ -2,6 +2,11 @@ fastapi==0.142.2
 uvicorn==0.54.0
 SQLAlchemy==2.1.2
 pydantic==2.13.5
-networkx==3.7
+# Pinned to the last release that still supports the deployed Python baseline
+# (3.11, see Dockerfile / render-split.yaml). networkx 3.7 requires Python
+# >=3.12 and only installs on newer local interpreters, so it silently skipped
+# the container build. The routing engine only uses APIs stable well below
+# this version (DiGraph, add_edge, shortest_path, shortest_simple_paths).
+networkx==3.6.1
 httpx==0.28.1
 pytest==9.1.1
